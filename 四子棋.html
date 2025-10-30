@@ -178,32 +178,36 @@ function initSocket(clientName) { // <-- (2) 接收您的暱稱
   socket.emit('joinGame', { name: clientName }); // <-- (3) 發送暱稱
 
   // 2. 監聽：伺服器通知遊戲開始
-  socket.on('gameStart', (data) => {
-    myPlayerNumber = data.playerNumber; // 儲存我是 P1 還是 P2
+  // 2. 監聽：伺服器通知遊戲開始
+      socket.on('gameStart', (data) => {
+        myPlayerNumber = data.playerNumber; // 儲存我是 P1 還是 P2
 
-    // --- (4) 設置雙方暱稱 ---
-    if (myPlayerNumber === 1) {
-        // 我是 P1 (我的暱稱已在 player1Name)
-        player2Name = data.opponentName || '對手'; // 儲存 P2 暱稱
-    } else {
-        // 我是 P2 (我的暱稱在 player1Name 變數中)
-        player2Name = player1Name; // 將我的暱稱存到 P2
-        player1Name = data.opponentName || '對手'; // 儲存 P1 暱稱
-    }
-    // ------------------------
+        // --- (4) 設置雙方暱稱 (新邏輯) ---
+        // 伺服器現在是名稱的唯一標準
+        if (myPlayerNumber === 1) {
+            // 我是 P1
+            player1Name = data.yourName;
+            player2Name = data.opponentName;
+        } else {
+            // 我是 P2
+            player1Name = data.opponentName; // P1 是對手
+            player2Name = data.yourName;     // 我是 P2 (名稱可能已被伺服器改為 "玩家二")
+        }
+        // ------------------------
 
-    // 線上模式永遠由 P1 (紅棋) 先手
-    initGame(1); 
+        // 線上模式永遠由 P1 (紅棋) 先手
+        initGame(1); 
 
-    // (5) 更新狀態列 (現在會顯示暱稱了)
-    if (myPlayerNumber === 1) {
-      setStatus(`遊戲開始！您先手 (${player1Name})`);
-      isProcessingMove = false; // P1 先手，解鎖可以下棋
-    } else {
-      setStatus(`遊戲開始！對手先手 (${player1Name})`);
-      isProcessingMove = true; // P2 後手，鎖定等待對手
-    }
-  });
+        // (5) 更新狀態列 (P1 永遠是 player1Name)
+        if (myPlayerNumber === 1) {
+          setStatus(`遊戲開始！您先手 (${player1Name})`);
+          isProcessingMove = false; // P1 先手，解鎖可以下棋
+        } else {
+          // 我是 P2，我等待 P1
+          setStatus(`遊戲開始！對手先手 (${player1Name})`);
+          isProcessingMove = true; // P2 後手，鎖定等待對手
+        }
+      });
   // 3. 監聽：伺服器通知正在等待
   socket.on('waitingForOpponent', () => {
     setStatus('等待對手加入...');

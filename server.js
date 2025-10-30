@@ -64,14 +64,28 @@ socket.on('joinGame', (data) => { // <-- (1) 接收 data
 
       // --- (此處的 player1 和 player2 已經是隨機的) ---
       // 玩家 1 (先手)
+      let p1Name = player1.playerName;
+      let p2Name = player2.playerName;
+
+      // 檢查是否兩人都使用預設名稱
+      if (p1Name === '玩家一' && p2Name === '玩家一') {
+        p2Name = '玩家二'; // 強制將 P2 改名
+        player2.playerName = p2Name; // 更新 P2 socket 上的紀錄
+      }
+      // ▲▲▲
+
+      // --- (此處的 player1 和 player2 已經是隨機的) ---
+      // 玩家 1 (先手)
       player1.emit('gameStart', { 
         playerNumber: 1, 
-        opponentName: player2.playerName 
+        yourName: p1Name,            // (1) 告訴 P1 他的名字
+        opponentName: p2Name         // (2) 告訴 P1 對手的名字
       });
       // 玩家 2 (後手)
       player2.emit('gameStart', { 
         playerNumber: 2, 
-        opponentName: player1.playerName 
+        yourName: p2Name,            // (3) 告訴 P2 他的新名字 ("玩家二")
+        opponentName: p1Name         // (4) 告訴 P2 對手的名字
       });
       // ------------------------------------------
 
