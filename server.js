@@ -36,43 +36,54 @@ socket.on('joinGame', (data) => { // <-- (1) 接收 data
 
   // 檢查是否已經有玩家在等待
   if (waitingPlayer) {
-    // 如果有，將兩位玩家配對
-    const player1 = waitingPlayer;
-    const player2 = socket;
-    
-    // 清空等待室
-    waitingPlayer = null;
+      
+      // ▼▼▼ 新增的隨機配對邏輯 ▼▼▼
+      let player1, player2;
+      
+      if (Math.random() < 0.5) {
+        player1 = waitingPlayer; // A 是 P1
+        player2 = socket;        // B 是 P2
+      } else {
+        player1 = socket;        // B 是 P1
+        player2 = waitingPlayer; // A 是 P2
+      }
+      // ▲▲▲
 
-    // 建立一個 "房間" (room) 給這兩位玩家
-    const roomName = `game_${player1.id}_${player2.id}`;
-    player1.join(roomName);
-    player2.join(roomName);
+      // 清空等待室
+      waitingPlayer = null;
 
-    // 將房間名稱存到 socket 物件上，方便之後使用
-    player1.room = roomName;
-    player2.room = roomName;
+      // 建立一個 "房間" (room) 給這兩位玩家
+      // (注意：這裡的變數名稱 player1 和 player2 已經被隨機指派了)
+      const roomName = `game_${player1.id}_${player2.id}`;
+      player1.join(roomName);
+      player2.join(roomName);
 
-    // --- (3) 修改 gameStart，發送對手的暱稱 ---
-    // 玩家 1 (先手)
-    player1.emit('gameStart', { 
-      playerNumber: 1, 
-      opponentName: player2.playerName // 發送 P2 的暱稱
-    });
-    // 玩家 2 (後手)
-    player2.emit('gameStart', { 
-      playerNumber: 2, 
-      opponentName: player1.playerName // 發送 P1 的暱稱
-    });
-    // ------------------------------------------
+      // 將房間名稱存到 socket 物件上，方便之後使用
+      player1.room = roomName;
+      player2.room = roomName;
 
-    console.log(`遊戲開始: ${player1.playerName} (P1) vs ${player2.playerName} (P2)`);
+      // --- (此處的 player1 和 player2 已經是隨機的) ---
+      // 玩家 1 (先手)
+      player1.emit('gameStart', { 
+        playerNumber: 1, 
+        opponentName: player2.playerName 
+      });
+      // 玩家 2 (後手)
+      player2.emit('gameStart', { 
+        playerNumber: 2, 
+        opponentName: player1.playerName 
+      });
+      // ------------------------------------------
 
-  } else {
-    // 如果沒有玩家在等待，將這位玩家設為等待中
-    waitingPlayer = socket;
-    socket.emit('waitingForOpponent');
-    console.log('玩家', socket.playerName, '正在等待對手...');
-  }
+      console.log(`遊戲開始 (隨機): ${player1.playerName} (P1) vs ${player2.playerName} (P2)`);
+
+    } else {
+      // (else 區塊保持不變)
+      // 如果沒有玩家在等待，將這位玩家設為等待中
+      waitingPlayer = socket;
+      socket.emit('waitingForOpponent');
+      console.log('玩家', socket.playerName, '正在等待對手...');
+    }
 });
 
   // 監聽 'makeMove' 事件
