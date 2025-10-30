@@ -14,18 +14,18 @@ body {
 }
 #board {
   display: grid;
-  grid-template-columns: repeat(7, 80px);
-  grid-template-rows: repeat(6, 80px);
-  gap: 6px;
+  grid-template-columns: repeat(7, 70px);
+  grid-template-rows: repeat(6, 70px);
+  gap: 5px;
   background: #004080;
-  padding: 6px;
+  padding: 5px;
   border-radius: 10px;
   box-shadow: 0 5px 20px rgba(0,0,0,0.3);
   margin-top: 20px;
 }
 .cell {
-  width: 80px;
-  height: 80px;
+  width: 70px;
+  height: 70px;
   background: #87b4ff;
   border-radius: 50%;
   display: flex;
@@ -38,8 +38,8 @@ body {
   cursor: pointer;
 }
 .disc {
-  width: 70px;
-  height: 70px;
+  width: 60px;
+  height: 60px;
   border-radius: 50%;
   box-shadow: inset 0 3px 10px rgba(0,0,0,0.3);
 }
@@ -57,7 +57,7 @@ body {
   font-weight: bold;
 }
 
-#overlay, #victoryPopup {
+#overlay, #victoryPopup, #roomOptionsPopup, #createRoomPopup, #joinRoomPopup {
   position: fixed;
   top: 0; left: 0;
   width: 100vw; height: 100vh;
@@ -96,6 +96,15 @@ button:hover {
   width: 100%;
   margin: 8px 0;
   background: #2a7be4;
+}
+
+#credits {
+  position: fixed; /* 固定在視窗上 */
+  bottom: 10px;    /* 離底部 10px */
+  right: 15px;     /* 離右側 15px */
+  font-size: 14px;
+  color: #555;      /* 深灰色 */
+  z-index: 900;      /* 確保它在彈出視窗(1000)的下面 */
 }
 
 #victoryPopup { display: none; }
@@ -152,6 +161,7 @@ button:hover {
   </div>
 </div>
 
+<div id="credits">製作人BOB</div>
 <script src="/socket.io/socket.io.js"></script>
 
 <script>
@@ -327,90 +337,6 @@ function submitJoinRoom() {
 // ▲▲▲ 新函數到此結束 ▲▲▲
 
 // (initGame 函數維持不變)
-function initGame(startingPlayer) { // <-- 接收參數
-  boardState = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
-  
-  turn = startingPlayer || 1; // 使用傳入的參數，若無則預設 1
-  winner = 0;
-  render();
-  
-  // 更新狀態文字，使其能正確顯示 P1 或 P2
-  setStatus(`${turn === 1 ? player1Name : player2Name} 的回合`);
-  isProcessingMove = false; // 預設解鎖
-
-  // 如果是 AI 模式 且 AI (玩家2) 先手，則自動下棋
-  if (mode === 'ai' && turn === 2) {
-    isProcessingMove = true; // AI 先手，先鎖定
-    setTimeout(aiMove, 700); 
-  }
-}
-
-
-// ▼▼▼ 全新函數：用於初始化 Socket.IO ▼▼▼
-function initSocket(clientName) { // <-- (2) 接收您的暱稱
-  socket = io(); // 連接到伺服器
-
-  // 1. 連線後，立刻發送 'joinGame' 請求配對 (並附上暱稱)
-  socket.emit('joinGame', { name: clientName }); // <-- (3) 發送暱稱
-
-  // 2. 監聽：伺服器通知遊戲開始
-  // 2. 監聽：伺服器通知遊戲開始
-      socket.on('gameStart', (data) => {
-        myPlayerNumber = data.playerNumber; // 儲存我是 P1 還是 P2
-
-        // --- (4) 設置雙方暱稱 (新邏輯) ---
-        // 伺服器現在是名稱的唯一標準
-        if (myPlayerNumber === 1) {
-            // 我是 P1
-            player1Name = data.yourName;
-            player2Name = data.opponentName;
-        } else {
-            // 我是 P2
-            player1Name = data.opponentName; // P1 是對手
-            player2Name = data.yourName;     // 我是 P2 (名稱可能已被伺服器改為 "玩家二")
-        }
-        // ------------------------
-
-        // 線上模式永遠由 P1 (紅棋) 先手
-        initGame(1); 
-
-        // (5) 更新狀態列 (P1 永遠是 player1Name)
-        if (myPlayerNumber === 1) {
-          setStatus(`遊戲開始！您先手 (${player1Name})`);
-          isProcessingMove = false; // P1 先手，解鎖可以下棋
-        } else {
-          // 我是 P2，我等待 P1
-          setStatus(`遊戲開始！對手先手 (${player1Name})`);
-          isProcessingMove = true; // P2 後手，鎖定等待對手
-        }
-      });
-  // 3. 監聽：伺服器通知正在等待
-  socket.on('waitingForOpponent', () => {
-    setStatus('等待對手加入...');
-    isProcessingMove = true; // 等待時鎖定棋盤
-  });
-
-  // 4. 監聽：伺服器轉發對手的移動
-  socket.on('opponentMove', (data) => {
-    // data 包含 { r, c, player }
-    if (winner) return;
-    
-    // 對手下棋了，我們播放動畫，此時鎖定
-    isProcessingMove = true; 
-    placeDisc(data.r, data.c, data.player);
-    // 動畫結束後，'transitionend' 事件會檢查並解鎖
-  });
-
-  // 5. 監聽：對手斷線
-  socket.on('opponentLeft', () => {
-    if (!winner) {
-      winner = myPlayerNumber; // 對方斷線，我方勝利
-      setStatus('對手已離開連線，您獲勝了！');
-      isProcessingMove = true; // 鎖定遊戲
-    }
-  });
-}
-
 function initGame(startingPlayer) { // <-- 接收參數
   boardState = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
   
