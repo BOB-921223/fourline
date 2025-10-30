@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>四子棋遊戲</title>
+<style>
+body {
+  font-family: 'Segoe UI', sans-serif;
+  background: #F5EFE4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 0;
+}
+#board {
+  display: grid;
+  grid-template-columns: repeat(7, 80px);
+  grid-template-rows: repeat(6, 80px);
+  gap: 6px;
+  background: #004080;
+  padding: 6px;
+  border-radius: 10px;
+  box-shadow: 0 5px 20px rgba(0,0,0,0.3);
+  margin-top: 20px;
+}
+.cell {
+  width: 80px;
+  height: 80px;
+  background: #87b4ff;
+  border-radius: 50%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+}
+.cell.empty:hover {
+  background: #bcd4ff;
+  cursor: pointer;
+}
+.disc {
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  box-shadow: inset 0 3px 10px rgba(0,0,0,0.3);
+}
+.disc.p1 { background: red; }
+.disc.p2 { background: yellow; }
+
+.disc.falling {
+  transition: top 0.4s cubic-bezier(0.25, 0.7, 0.3, 1.2);
+  box-shadow: 0 8px 14px rgba(0,0,0,0.4);
+}
+
+#status {
+  margin-top: 20px;
+  font-size: 20px;
+  font-weight: bold;
+}
+
+#overlay, #victoryPopup {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100vw; height: 100vh;
+  background: rgba(0,0,0,0.6);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+}
+
+.popup {
+  background: white;
+  border-radius: 12px;
+  padding: 30px;
+  text-align: center;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+}
+
+.popup h2 {
+  margin-bottom: 15px;
+}
+
+button {
+  background: #004080;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  margin-top: 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+button:hover {
+  background: #0059b3;
+}
+
+.mode-btn {
+  display: block;
+  width: 100%;
+  margin: 8px 0;
+  background: #2a7be4;
+}
+
+#victoryPopup { display: none; }
+</style>
+</head>
+<body>
+
+<h1>四子棋遊戲</h1>
+<div id="status"></div>
+<div id="board"></div>
+
+<div id="overlay">
+  <div class="popup">
+    <h2>請輸入暱稱</h2>
+    <input type="text" id="playerName" placeholder="玩家一" style="padding:8px; border-radius:5px; border:1px solid #aaa;">
+    <h3>選擇遊戲模式</h3>
+    <button class="mode-btn" onclick="startGame('ai')">AI 對戰 (強化版)</button>
+    <button class="mode-btn" onclick="startGame('local')">本機對戰</button>
+    <button class="mode-btn" onclick="startGame('online')">連線對戰</button>
+  </div>
+</div>
+
+<div id="victoryPopup">
+  <div class="popup">
+    <h2 id="winnerText"></h2>
+    <button onclick="resetGame()">重新開始</button>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+
+<script>
+const ROWS = 6, COLS = 7;
+let boardState, turn, winner = 0;
+let isProcessingMove = false; 
+let mode = 'local';
+let player1Name = '玩家一', player2Name = '玩家二';
+
+// ▼▼▼ 新增連線對戰用的變數 ▼▼▼
+let socket;
+let myPlayerNumber; 
+// ▲▲▲
+
+const boardEl = document.getElementById('board');
+const statusEl = document.getElementById('status');
+
+for (let r = 0; r < ROWS * COLS; r++) {
+  const cell = document.createElement('div');
+  cell.className = 'cell empty';
+  cell.addEventListener('click', () => handleMove(Math.floor(r / COLS), r % COLS));
+  boardEl.appendChild(cell);
+}
+
+// ▼▼▼ 已修改：加入 'online' 模式的處理 ▼▼▼
+function startGame(selectedMode) {
+  mode = selectedMode;
+  const nameInput = document.getElementById('playerName').value.trim();
+  player1Name = nameInput || '玩家一';
+
+  if (mode === 'online') {
+    player2Name = '線上對手'; // (這會被稍後覆蓋)
+    document.getElementById('overlay').style.display = 'none';
+    initSocket(player1Name); // <-- (1) 將您的暱稱傳入
+    setStatus('正在尋找對手...');
+    // 線上模式的 initGame 會在 'gameStart' 事件中被呼叫
+  } else {
+    // AI 或 本機模式
+    player2Name = (mode === 'ai') ? 'AI' : '玩家二';
+    const startingPlayer = Math.floor(Math.random() * 2) + 1; 
+    document.getElementById('overlay').style.display = 'none';
+    initGame(startingPlayer); 
+  }
+}
+
+// ▼▼▼ 全新函數：用於初始化 Socket.IO ▼▼▼
+function initSocket(clientName) { // <-- (2) 接收您的暱稱
+  socket = io(); // 連接到伺服器
+
+  // 1. 連線後，立刻發送 'joinGame' 請求配對 (並附上暱稱)
+  socket.emit('joinGame', { name: clientName }); // <-- (3) 發送暱稱
+
+  // 2. 監聽：伺服器通知遊戲開始
+  socket.on('gameStart', (data) => {
+    myPlayerNumber = data.playerNumber; // 儲存我是 P1 還是 P2
+
+    // --- (4) 設置雙方暱稱 ---
+    if (myPlayerNumber === 1) {
+        // 我是 P1 (我的暱稱已在 player1Name)
+        player2Name = data.opponentName || '對手'; // 儲存 P2 暱稱
+    } else {
+        // 我是 P2 (我的暱稱在 player1Name 變數中)
+        player2Name = player1Name; // 將我的暱稱存到 P2
+        player1Name = data.opponentName || '對手'; // 儲存 P1 暱稱
+    }
+    // ------------------------
+
+    // 線上模式永遠由 P1 (紅棋) 先手
+    initGame(1); 
+
+    // (5) 更新狀態列 (現在會顯示暱稱了)
+    if (myPlayerNumber === 1) {
+      setStatus(`遊戲開始！您先手 (${player1Name})`);
+      isProcessingMove = false; // P1 先手，解鎖可以下棋
+    } else {
+      setStatus(`遊戲開始！對手先手 (${player1Name})`);
+      isProcessingMove = true; // P2 後手，鎖定等待對手
+    }
+  });
+  // 3. 監聽：伺服器通知正在等待
+  socket.on('waitingForOpponent', () => {
+    setStatus('等待對手加入...');
+    isProcessingMove = true; // 等待時鎖定棋盤
+  });
+
+  // 4. 監聽：伺服器轉發對手的移動
+  socket.on('opponentMove', (data) => {
+    // data 包含 { r, c, player }
+    if (winner) return;
+    
+    // 對手下棋了，我們播放動畫，此時鎖定
+    isProcessingMove = true; 
+    placeDisc(data.r, data.c, data.player);
+    // 動畫結束後，'transitionend' 事件會檢查並解鎖
+  });
+
+  // 5. 監聽：對手斷線
+  socket.on('opponentLeft', () => {
+    if (!winner) {
+      winner = myPlayerNumber; // 對方斷線，我方勝利
+      setStatus('對手已離開連線，您獲勝了！');
+      isProcessingMove = true; // 鎖定遊戲
+    }
+  });
+}
+
+function initGame(startingPlayer) { // <-- 接收參數
+  boardState = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+  
+  turn = startingPlayer || 1; // 使用傳入的參數，若無則預設 1
+  winner = 0;
+  render();
+  
+  // 更新狀態文字，使其能正確顯示 P1 或 P2
+  setStatus(`${turn === 1 ? player1Name : player2Name} 的回合`);
+  isProcessingMove = false; // 預設解鎖
+
+  // 如果是 AI 模式 且 AI (玩家2) 先手，則自動下棋
+  if (mode === 'ai' && turn === 2) {
+    isProcessingMove = true; // AI 先手，先鎖定
+    setTimeout(aiMove, 700); 
+  }
+}
+
+function render() {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const idx = r * COLS + c;
+      const cell = boardEl.children[idx];
+      cell.innerHTML = '';
+      cell.classList.toggle('empty', boardState[r][c] === 0);
+      if (boardState[r][c] !== 0) {
+        const disc = document.createElement('div');
+        disc.className = 'disc ' + (boardState[r][c] === 1 ? 'p1' : 'p2');
+        cell.appendChild(disc);
+      }
+    }
+  }
+}
+
+// ▼▼▼ 已修改：加入 'online' 模式的檢查和發送 ▼▼▼
+function handleMove(r, c) {
+  if (winner || isProcessingMove) return; 
+  if (mode === 'ai' && turn === 2) return; 
+  
+  // ▼▼▼ 新增：線上模式時，只能在輪到自己時下棋 ▼▼▼
+  if (mode === 'online' && turn !== myPlayerNumber) return;
+  // ▲▲▲
+
+  const col = c;
+  let row = -1;
+  for (let rr = ROWS - 1; rr >= 0; rr--) {
+    if (boardState[rr][col] === 0) { row = rr; break; }
+  }
+  if (row === -1) return; // 欄位已滿，也返回
+
+  isProcessingMove = true; // 找到了有效移動，立刻上鎖
+  placeDisc(row, col, turn);
+
+  // ▼▼▼ 新增：如果是線上模式，將移動發送給伺服器 ▼▼▼
+  if (mode === 'online') {
+    socket.emit('makeMove', { r: row, c: col, player: turn });
+  }
+  // ▲▲▲
+}
+
+function placeDisc(r, c, player) {
+  const idx = r * COLS + c;
+  const cellEl = boardEl.children[idx];
+  const disc = document.createElement('div');
+  disc.className = 'disc ' + (player === 1 ? 'p1' : 'p2') + ' falling';
+  document.body.appendChild(disc);
+
+  const boardRect = boardEl.getBoundingClientRect();
+  const cellRect = cellEl.getBoundingClientRect();
+  const startX = cellRect.left + cellRect.width / 2;
+  const startY = boardRect.top - 80;
+  const endY = cellRect.top + cellRect.height / 2;
+
+  disc.style.position = 'fixed';
+  disc.style.left = `${startX - 35}px`;
+  disc.style.top = `${startY}px`;
+  disc.style.zIndex = 9999;
+  disc.style.transition = 'top 0.4s ease-in';
+
+  requestAnimationFrame(() => {
+    disc.style.top = `${endY - 35}px`;
+  });
+
+  // ▼▼▼ 已修改：重寫 'transitionend' 的解鎖邏輯 ▼▼▼
+  disc.addEventListener('transitionend', () => {
+    disc.remove();
+    boardState[r][c] = player; // 'player' 是 *剛剛* 下棋的人
+    render();
+
+    if (checkWin(r, c, player)) {
+      winner = player;
+      showVictory(player === 1 ? player1Name : player2Name);
+      isProcessingMove = false; // 遊戲結束，永遠解鎖
+      return; // 停止後續處理
+    }
+
+    // 遊戲未結束，切換回合
+    turn = 3 - player;
+    setStatus(`${turn === 1 ? player1Name : player2Name} 的回合`);
+
+    // --- 根據不同模式決定是否解鎖 ---
+
+    if (mode === 'ai') {
+      if (turn === AI_PLAYER) {
+        // 輪到 AI，保持鎖定並呼叫 AI
+        setTimeout(aiMove, 700);
+      } else {
+        // 輪到人類，解鎖
+        isProcessingMove = false;
+      }
+    } else if (mode === 'local') {
+      // 輪到另一個人類，解鎖
+      isProcessingMove = false;
+    } else if (mode === 'online') {
+      if (turn === myPlayerNumber) {
+        // 對手剛下完，輪到我了，解鎖
+        isProcessingMove = false;
+      } else {
+        // 我剛下完，輪到對手，保持鎖定
+      }
+    }
+  });
+}
+
+// 這是您檔案中原有的 (保留)
+function getAvailableRow(col) {
+  for (let r = ROWS - 1; r >= 0; r--) {
+    if (boardState[r][col] === 0) return r;
+  }
+  return -1;
+}
+
+
+// --- AI 強化區塊開始 (Minimax) ---
+// (此區塊完全不變，保留您原本的 AI 邏輯)
+
+const AI_PLAYER = 2;
+const HUMAN_PLAYER = 1;
+const EMPTY = 0;
+const SEARCH_DEPTH = 5; 
+const SCORE_WIN = 1000000;
+const SCORE_THREE = 5000; 
+const SCORE_TWO = 50;
+const SCORE_CENTER_BONUS = 10; 
+
+function evaluateWindow(window, player) {
+  let score = 0;
+  const oppPlayer = (player === AI_PLAYER) ? HUMAN_PLAYER : AI_PLAYER;
+  const playerCount = window.filter(p => p === player).length;
+  const oppCount = window.filter(p => p === oppPlayer).length;
+  const emptyCount = window.filter(p => p === EMPTY).length;
+
+  if (playerCount === 4) {
+    score += SCORE_WIN;
+  } else if (playerCount === 3 && emptyCount === 1) {
+    score += SCORE_THREE;
+  } else if (playerCount === 2 && emptyCount === 2) {
+    score += SCORE_TWO;
+  }
+  if (oppCount === 3 && emptyCount === 1) {
+    score -= SCORE_THREE * 0.9;
+  }
+  return score;
+}
+
+function scorePosition(board, player) {
+  let score = 0;
+  const centerCol = Math.floor(COLS / 2);
+  let centerCount = 0;
+  for (let r = 0; r < ROWS; r++) {
+    if (board[r][centerCol] === player) {
+      centerCount++;
+    }
+  }
+  score += centerCount * SCORE_CENTER_BONUS;
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS - 3; c++) {
+      const window = [board[r][c], board[r][c+1], board[r][c+2], board[r][c+3]];
+      score += evaluateWindow(window, player);
+    }
+  }
+  for (let c = 0; c < COLS; c++) {
+    for (let r = 0; r < ROWS - 3; r++) {
+      const window = [board[r][c], board[r+1][c], board[r+2][c], board[r+3][c]];
+      score += evaluateWindow(window, player);
+    }
+  }
+  for (let r = 0; r < ROWS - 3; r++) {
+    for (let c = 0; c < COLS - 3; c++) {
+      const window = [board[r][c], board[r+1][c+1], board[r+2][c+2], board[r+3][c+3]];
+      score += evaluateWindow(window, player);
+    }
+  }
+  for (let r = 3; r < ROWS; r++) { 
+    for (let c = 0; c < COLS - 3; c++) {
+      const window = [board[r][c], board[r-1][c+1], board[r-2][c+2], board[r-3][c+3]];
+      score += evaluateWindow(window, player);
+    }
+  }
+  return score;
+}
+
+function checkWinForPlayer(board, player) {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS - 3; c++) {
+      if (board[r][c] === player && board[r][c+1] === player && board[r][c+2] === player && board[r][c+3] === player) return true;
+    }
+  }
+  for (let c = 0; c < COLS; c++) {
+    for (let r = 0; r < ROWS - 3; r++) {
+      if (board[r][c] === player && board[r+1][c] === player && board[r+2][c] === player && board[r+3][c] === player) return true;
+    }
+  }
+  for (let r = 0; r < ROWS - 3; r++) {
+    for (let c = 0; c < COLS - 3; c++) {
+      if (board[r][c] === player && board[r+1][c+1] === player && board[r+2][c+2] === player && board[r+3][c+3] === player) return true;
+    }
+  }
+  for (let r = 3; r < ROWS; r++) {
+    for (let c = 0; c < COLS - 3; c++) {
+      if (board[r][c] === player && board[r-1][c+1] === player && board[r-2][c+2] === player && board[r-3][c+3] === player) return true;
+    }
+  }
+  return false;
+}
+
+function getValidMoves(board) {
+  const validCols = [];
+  for (let c = 0; c < COLS; c++) {
+    if (board[0][c] === EMPTY) { 
+      validCols.push(c);
+    }
+  }
+  return validCols;
+}
+
+function isTerminalNode(board) {
+  return checkWinForPlayer(board, HUMAN_PLAYER) || 
+         checkWinForPlayer(board, AI_PLAYER) || 
+         getValidMoves(board).length === 0;
+}
+
+function minimax(board, depth, alpha, beta, maximizingPlayer) {
+  const validMoves = getValidMoves(board);
+  const terminal = isTerminalNode(board);
+  if (depth === 0 || terminal) {
+    if (terminal) {
+      if (checkWinForPlayer(board, AI_PLAYER)) return SCORE_WIN;
+      else if (checkWinForPlayer(board, HUMAN_PLAYER)) return -SCORE_WIN;
+      else return 0; 
+    } else { 
+      return scorePosition(board, AI_PLAYER);
+    }
+  }
+  if (maximizingPlayer) { 
+    let value = -Infinity;
+    const centerPriority = [3, 2, 4, 1, 5, 0, 6];
+    const orderedMoves = centerPriority.filter(c => validMoves.includes(c));
+    for (const col of orderedMoves) {
+      const row = getAvailableRow(col); 
+      board[row][col] = AI_PLAYER; 
+      value = Math.max(value, minimax(board, depth - 1, alpha, beta, false));
+      board[row][col] = EMPTY; 
+      alpha = Math.max(alpha, value);
+      if (alpha >= beta) break; 
+    }
+    return value;
+  } else { 
+    let value = Infinity;
+    const centerPriority = [3, 2, 4, 1, 5, 0, 6];
+    const orderedMoves = centerPriority.filter(c => validMoves.includes(c));
+    for (const col of orderedMoves) {
+      const row = getAvailableRow(col);
+      board[row][col] = HUMAN_PLAYER; 
+      value = Math.min(value, minimax(board, depth - 1, alpha, beta, true));
+      board[row][col] = EMPTY; 
+      beta = Math.min(beta, value);
+      if (alpha >= beta) break; 
+    }
+    return value;
+  }
+}
+
+function aiMove() {
+  if (winner) return;
+  let bestScore = -Infinity;
+  let bestCol = -1;
+  const centerPriority = [3, 2, 4, 1, 5, 0, 6];
+  const validMoves = getValidMoves(boardState);
+  const orderedMoves = centerPriority.filter(c => validMoves.includes(c));
+  for (const col of orderedMoves) {
+    const row = getAvailableRow(col);
+    if (row === -1) continue;
+    boardState[row][col] = AI_PLAYER; 
+    let score = minimax(boardState, SEARCH_DEPTH, -Infinity, Infinity, false);
+    boardState[row][col] = EMPTY; 
+    if (score > bestScore) {
+      bestScore = score;
+      bestCol = col;
+    }
+  }
+  if (bestCol === -1) {
+    bestCol = validMoves[0] || 3; 
+  }
+  const finalRow = getAvailableRow(bestCol);
+  if (finalRow !== -1) {
+    placeDisc(finalRow, bestCol, AI_PLAYER);
+  }
+}
+
+// --- AI 強化區塊結束 ---
+
+
+// 這是您檔案中原有的 (保留)
+function checkWin(r, c, p) {
+  const dirs = [[1,0],[0,1],[1,1],[1,-1]];
+  for (const [dr,dc] of dirs) {
+    let count = 1;
+    for (let i=1;i<4;i++){ const nr=r+dr*i, nc=c+dc*i; if(nr<0||nr>=ROWS||nc<0||nc>=COLS||boardState[nr][nc]!==p) break; count++; }
+    for (let i=1;i<4;i++){ const nr=r-dr*i, nc=c-dc*i; if(nr<0||nr>=ROWS||nc<0||nc>=COLS||boardState[nr][nc]!==p) break; count++; }
+    if (count>=4) return true;
+  }
+  return false;
+}
+
+// D 這是您檔案中原有的 (保留)
+function setStatus(text){ statusEl.textContent = text; }
+
+// 這是您檔案中原有的 (保留)
+function showVictory(name){
+  document.getElementById('winnerText').textContent = `${name} 勝利！`;
+  document.getElementById('victoryPopup').style.display = 'flex';
+}
+
+// ▼▼▼ 已修改：加入 socket.disconnect() ▼▼▼
+function resetGame(){
+  // 如果有連線，則斷開
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+    myPlayerNumber = null;
+  }
+  
+  document.getElementById('victoryPopup').style.display = 'none';
+  document.getElementById('overlay').style.display = 'flex';
+}
+</script>
+</body>
+</html>
