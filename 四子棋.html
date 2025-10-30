@@ -112,9 +112,9 @@ button:hover {
     <h2>請輸入暱稱</h2>
     <input type="text" id="playerName" placeholder="玩家一" style="padding:8px; border-radius:5px; border:1px solid #aaa;">
     <h3>選擇遊戲模式</h3>
-    <button class="mode-btn" onclick="startGame('ai')">AI 對戰 (強化版)</button>
-    <button class="mode-btn" onclick="startGame('local')">本機對戰</button>
-    <button class="mode-btn" onclick="startGame('online')">連線對戰</button>
+   <button class="mode-btn" onclick="selectGameMode('ai')">AI 對戰(很強的喔)</button>
+    <button class="mode-btn" onclick="selectGameMode('local')">本機對戰</button>
+    <button class="mode-btn" onclick="selectGameMode('online')">連線對戰</button>
   </div>
 </div>
 
@@ -122,6 +122,33 @@ button:hover {
   <div class="popup">
     <h2 id="winnerText"></h2>
     <button onclick="resetGame()">重新開始</button>
+  </div>
+</div>
+
+<div id="roomOptionsPopup" style="display: none;">
+  <div class="popup">
+    <h2>連線對戰</h2>
+    <button class="mode-btn" onclick="showCreateRoomPopup()">創建房間</button>
+    <button class="mode-btn" onclick="showJoinRoomPopup()">搜尋房間</button>
+    <button onclick="closeRoomOptions()" style="background: #777;">返回</button>
+  </div>
+</div>
+
+<div id="createRoomPopup" style="display: none;">
+  <div class="popup">
+    <h2>房間代碼</h2>
+    <h3 id="roomCodeDisplay" style="font-size: 2.5em; letter-spacing: 4px; margin: 10px 0;">----</h3>
+    <p id="createStatus">正在連接伺服器...</p>
+    <button onclick="cancelRoomCreation()" style="background: #777;">取消</button>
+  </div>
+</div>
+
+<div id="joinRoomPopup" style="display: none;">
+  <div class="popup">
+    <h2>搜尋房間</h2>
+    <input type="text" id="roomCodeInput" placeholder="輸入 4 位代碼" maxlength="4" style="padding: 10px; font-size: 1.2em; text-align: center; letter-spacing: 2px; width: 150px;">
+    <button class="mode-btn" onclick="submitJoinRoom()">加入</button>
+    <button onclick="closeJoinRoomPopup()" style="background: #777;">取消</button>
   </div>
 </div>
 
@@ -149,26 +176,175 @@ for (let r = 0; r < ROWS * COLS; r++) {
   boardEl.appendChild(cell);
 }
 
-// ▼▼▼ 已修改：加入 'online' 模式的處理 ▼▼▼
-function startGame(selectedMode) {
+// (刪除舊的 startGame 和 initSocket)
+// ▼▼▼ 貼上以下所有新函數 ▼▼▼
+
+function selectGameMode(selectedMode) {
   mode = selectedMode;
-  const nameInput = document.getElementById('playerName').value.trim();
-  player1Name = nameInput || '玩家一';
+  // (1) 先取得暱稱
+  player1Name = document.getElementById('playerName').value.trim() || '玩家一';
+  
+  // 隱藏暱稱視窗
+  document.getElementById('overlay').style.display = 'none';
 
   if (mode === 'online') {
-    player2Name = '線上對手'; // (這會被稍後覆蓋)
-    document.getElementById('overlay').style.display = 'none';
-    initSocket(player1Name); // <-- (1) 將您的暱稱傳入
-    setStatus('正在尋找對手...');
-    // 線上模式的 initGame 會在 'gameStart' 事件中被呼叫
+    // (2) 顯示"連線對戰"選項
+    document.getElementById('roomOptionsPopup').style.display = 'flex';
+    setStatus(''); // 清除狀態
   } else {
-    // AI 或 本機模式
+    // (3) AI 或 本機模式 (維持舊邏輯)
     player2Name = (mode === 'ai') ? 'AI' : '玩家二';
     const startingPlayer = Math.floor(Math.random() * 2) + 1; 
-    document.getElementById('overlay').style.display = 'none';
     initGame(startingPlayer); 
   }
 }
+
+// --- 房間介面控制 (新函數) ---
+
+function showCreateRoomPopup() {
+  document.getElementById('roomOptionsPopup').style.display = 'none';
+  document.getElementById('createRoomPopup').style.display = 'flex';
+  document.getElementById('createStatus').textContent = '正在連接伺服器...';
+  document.getElementById('roomCodeDisplay').textContent = '----';
+  initSocketAndCreateRoom(); // (關鍵)
+}
+
+function showJoinRoomPopup() {
+  document.getElementById('roomOptionsPopup').style.display = 'none';
+  document.getElementById('joinRoomPopup').style.display = 'flex';
+  setStatus(''); // 清除狀態
+}
+
+function closeRoomOptions() {
+  document.getElementById('roomOptionsPopup').style.display = 'none';
+  document.getElementById('overlay').style.display = 'flex'; // 返回暱稱視窗
+}
+
+function cancelRoomCreation() {
+  if (socket) socket.disconnect();
+  document.getElementById('createRoomPopup').style.display = 'none';
+  document.getElementById('roomOptionsPopup').style.display = 'flex';
+}
+
+function closeJoinRoomPopup() {
+  document.getElementById('joinRoomPopup').style.display = 'none';
+  document.getElementById('roomOptionsPopup').style.display = 'flex';
+}
+
+// --- Socket 核心邏輯 (重構) ---
+
+// (A) 監聽器
+function initSocketListeners() {
+  // 1. (伺服器回應) 房間已創建
+  socket.on('roomCreated', (data) => {
+    document.getElementById('roomCodeDisplay').textContent = data.roomCode;
+    document.getElementById('createStatus').textContent = '等待對手加入...';
+  });
+
+  // 2. (伺服器回應) 加入時發生錯誤
+  socket.on('joinError', (data) => {
+    setStatus(data.message);
+    if(socket) socket.disconnect();
+    // 介面重置
+    document.getElementById('joinRoomPopup').style.display = 'none';
+    document.getElementById('roomOptionsPopup').style.display = 'flex';
+  });
+
+  // 3. (伺服器廣播) 遊戲開始
+  socket.on('gameStart', (data) => {
+    // 隱藏所有彈出視窗
+    document.getElementById('createRoomPopup').style.display = 'none';
+    document.getElementById('joinRoomPopup').style.display = 'none';
+
+    // (以下邏輯與您上一個版本相同)
+    myPlayerNumber = data.playerNumber;
+    if (myPlayerNumber === 1) {
+        player1Name = data.yourName;
+        player2Name = data.opponentName;
+    } else {
+        player1Name = data.opponentName;
+        player2Name = data.yourName;
+    }
+    initGame(1); // P1 (紅棋) 永遠先手
+    if (myPlayerNumber === 1) {
+      setStatus(`遊戲開始！您先手 (${player1Name})`);
+      isProcessingMove = false;
+    } else {
+      setStatus(`遊戲開始！對手先手 (${player1Name})`);
+      isProcessingMove = true;
+    }
+  });
+
+  // 4. (伺服器廣播) 對手移動
+  socket.on('opponentMove', (data) => {
+    if (winner) return;
+    isProcessingMove = true; 
+    placeDisc(data.r, data.c, data.player);
+  });
+
+  // 5. (伺服器廣播) 對手斷線
+  socket.on('opponentLeft', () => {
+    if (!winner) {
+      winner = myPlayerNumber; 
+      setStatus('對手已離開連線，您獲勝了！');
+      isProcessingMove = true; 
+    }
+  });
+}
+
+// (B) 創建房間的動作
+function initSocketAndCreateRoom() {
+  if (socket) socket.disconnect();
+  socket = io();
+  initSocketListeners(); // 綁定所有 .on() 事件
+  
+  // 連線成功後，自動發送 'createRoom'
+  socket.on('connect', () => {
+    document.getElementById('createStatus').textContent = '正在創建房間...';
+    socket.emit('createRoom', { name: player1Name });
+  });
+}
+
+// (C) 加入房間的動作
+function submitJoinRoom() {
+  const roomCode = document.getElementById('roomCodeInput').value.trim();
+  if (roomCode.length !== 4) {
+    setStatus('請輸入 4 位房間代碼');
+    return;
+  }
+  
+  setStatus('正在加入房間...');
+  if (socket) socket.disconnect();
+  socket = io();
+  initSocketListeners(); // 綁定所有 .on() 事件
+
+  // 連線成功後，自動發送 'joinRoom'
+  socket.on('connect', () => {
+    socket.emit('joinRoom', { name: player1Name, roomCode: roomCode });
+  });
+}
+
+// ▲▲▲ 新函數到此結束 ▲▲▲
+
+// (initGame 函數維持不變)
+function initGame(startingPlayer) { // <-- 接收參數
+  boardState = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+  
+  turn = startingPlayer || 1; // 使用傳入的參數，若無則預設 1
+  winner = 0;
+  render();
+  
+  // 更新狀態文字，使其能正確顯示 P1 或 P2
+  setStatus(`${turn === 1 ? player1Name : player2Name} 的回合`);
+  isProcessingMove = false; // 預設解鎖
+
+  // 如果是 AI 模式 且 AI (玩家2) 先手，則自動下棋
+  if (mode === 'ai' && turn === 2) {
+    isProcessingMove = true; // AI 先手，先鎖定
+    setTimeout(aiMove, 700); 
+  }
+}
+
 
 // ▼▼▼ 全新函數：用於初始化 Socket.IO ▼▼▼
 function initSocket(clientName) { // <-- (2) 接收您的暱稱
@@ -578,7 +754,13 @@ function resetGame(){
     myPlayerNumber = null;
   }
   
+  // 隱藏所有遊戲視窗/彈出視窗
   document.getElementById('victoryPopup').style.display = 'none';
+  document.getElementById('roomOptionsPopup').style.display = 'none';
+  document.getElementById('createRoomPopup').style.display = 'none';
+  document.getElementById('joinRoomPopup').style.display = 'none';
+  
+  // 顯示一開始的暱稱視窗
   document.getElementById('overlay').style.display = 'flex';
 }
 </script>
