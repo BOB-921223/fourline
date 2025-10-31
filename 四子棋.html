@@ -107,6 +107,19 @@ button:hover {
   z-index: 900;      /* 確保它在彈出視窗(1000)的下面 */
 }
 
+#musicControl {
+  position: fixed;
+  bottom: 10px;
+  left: 15px;
+  font-size: 14px;
+  color: #555;
+  cursor: pointer;
+  z-index: 900;
+}
+#musicControl:hover {
+  color: #000; /* 滑鼠懸停時變色 */
+}
+
 #victoryPopup { display: none; }
 </style>
 </head>
@@ -162,6 +175,9 @@ button:hover {
 </div>
 
 <div id="credits">製作人BOB</div>
+
+<audio id="backgroundMusic" src="music.mp3" loop></audio>
+<div id="musicControl" onclick="toggleMusic()">🔇 播放</div>
 <script src="/socket.io/socket.io.js"></script>
 
 <script>
@@ -176,7 +192,29 @@ let socket;
 let myPlayerNumber; 
 // ▲▲▲
 
+const bgMusic = document.getElementById('backgroundMusic');
+bgMusic.volume = 0.4; //bgm聲音調整
+let hasMusicStarted = false;
 const boardEl = document.getElementById('board');
+document.addEventListener('click', () => {
+  // 檢查音樂是否已經開始
+  if (!hasMusicStarted) {
+    // 嘗試播放音樂
+    const playPromise = bgMusic.play();
+    if (playPromise !== undefined) {
+      playPromise.then(_ => {
+        // 播放成功
+        document.getElementById('musicControl').textContent = '🎵 靜音';
+        hasMusicStarted = true;
+      }).catch(error => {
+        // 播放失敗 (例如瀏覽器仍阻止)
+        console.warn("音樂播放失敗", error);
+        document.getElementById('musicControl').textContent = '🔇 播放';
+        hasMusicStarted = false;
+      });
+    }
+  }
+}, { once: true });
 const statusEl = document.getElementById('status');
 
 for (let r = 0; r < ROWS * COLS; r++) {
@@ -688,6 +726,18 @@ function resetGame(){
   
   // 顯示一開始的暱稱視窗
   document.getElementById('overlay').style.display = 'flex';
+}
+
+function toggleMusic() {
+  const musicControl = document.getElementById('musicControl');
+  if (bgMusic.paused) {
+    bgMusic.play();
+    musicControl.textContent = '🎵 靜音';
+    hasMusicStarted = true; // 確保旗標被設定
+  } else {
+    bgMusic.pause();
+    musicControl.textContent = '🔇 播放';
+  }
 }
 </script>
 </body>
