@@ -132,7 +132,7 @@ button:hover {
 <div id="overlay">
   <div class="popup">
     <h2>請輸入暱稱</h2>
-    <input type="text" id="playerName" placeholder="玩家一" style="padding:8px; border-radius:5px; border:1px solid #aaa;">
+    <input type="text" id="playerName" placeholder="玩家一" style="padding:8px; border-radius:5px; border:1px solid #aaa;" autocomplete="off">
     <h3>選擇遊戲模式</h3>
    <button class="mode-btn" onclick="selectGameMode('ai')">AI 對戰(很強的喔)</button>
     <button class="mode-btn" onclick="selectGameMode('local')">本機對戰</button>
@@ -261,6 +261,7 @@ function showJoinRoomPopup() {
   document.getElementById('roomOptionsPopup').style.display = 'none';
   document.getElementById('joinRoomPopup').style.display = 'flex';
   setStatus(''); // 清除狀態
+  document.getElementById('roomCodeInput').value = '';
 }
 
 function closeRoomOptions() {
